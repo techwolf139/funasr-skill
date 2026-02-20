@@ -34,17 +34,19 @@ class FunASRClient:
         mode: str = "2pass",
         chunk_size: str = "5,10,5",
         chunk_interval: int = 10,
-        use_itn: bool = True
+        use_itn: bool = True,
+        final_wait: float = 3.0
     ):
         self.host = host
         self.port = port
         self.ssl_enabled = ssl_enabled
-        self.mode = mode  # offline, online, 2pass
+        self.mode = mode
         self.chunk_size = [int(x) for x in chunk_size.split(",")]
         self.chunk_interval = chunk_interval
         self.use_itn = use_itn
         self.encoder_chunk_look_back = 4
         self.decoder_chunk_look_back = 0
+        self.final_wait = final_wait
         
     def _get_ws_uri(self) -> str:
         """Get WebSocket URI."""
@@ -144,7 +146,7 @@ class FunASRClient:
                     break
                     
                 if self.mode != "offline" and result["is_final"]:
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(self.final_wait)
                     break
                     
         except websockets.exceptions.ConnectionClosed:
@@ -303,6 +305,12 @@ async def main():
         help="1 for using ITN (inverse text normalization), 0 for not"
     )
     parser.add_argument(
+        "--final-wait",
+        type=float,
+        default=3.0,
+        help="Seconds to wait after final result before disconnecting"
+    )
+    parser.add_argument(
         "--output",
         type=str,
         help="Output file for transcription results"
@@ -320,7 +328,8 @@ async def main():
         ssl_enabled=args.ssl == 1,
         mode=args.mode,
         chunk_size=args.chunk_size,
-        use_itn=args.use_itn == 1
+        use_itn=args.use_itn == 1,
+        final_wait=args.final_wait
     )
     
     # Transcribe
