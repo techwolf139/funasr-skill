@@ -62,9 +62,49 @@ class FunASRClient:
             return ssl_context
         return None
     
+    def _check_ffmpeg(self) -> bool:
+        import shutil
+        return shutil.which("ffmpeg") is not None
+    
+    def _convert_audio(self, audio_path: Path) -> tuple:
+        import subprocess
+        import tempfile
+        
+        temp_wav = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        temp_wav.close()
+        
+        cmd = [
+            "ffmpeg", "-y", "-i", str(audio_path),
+            "-ar", "16000", "-ac", "1",
+            "-acodec", "pcm_s16le", temp_wav.name
+        ]
+        
+        logger.info(f"Converting audio with ffmpeg: {' '.join(cmd[:6])}...")
+        
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True
+        )
+        
+        if result.returncode != 0:
+            raise RuntimeError(f"ffmpeg conversion failed: {result.stderr}")
+        
+        with wave.open(temp_wav.name, "rb") as wav_file:
+            sample_rate = wav_file.getframerate()
+            frames = wav_file.readframes(wav_file.getnframes())
+        
+        import os
+        os.unlink(temp_wav.name)
+        
+        logger.info(f"ffmpeg conversion complete: {len(frames)} bytes, {sample_rate}Hz")
+        return bytes(frames), sample_rate, "pcm"
+    
     def _read_audio_file(self, audio_path: Union[str, Path]) -> tuple:
         path = Path(audio_path)
         suffix = path.suffix.lower()
+        
+        supported_suffixes = {".wav", ".pcm"}
         
         if suffix == ".wav":
             with wave.open(str(path), "rb") as wav_file:
@@ -74,6 +114,8 @@ class FunASRClient:
         elif suffix == ".pcm":
             with open(str(path), "rb") as f:
                 return f.read(), 16000, "pcm"
+        elif self._check_ffmpeg():
+            return self._convert_audio(path)
         else:
             with open(str(path), "rb") as f:
                 return f.read(), 16000, "others"
