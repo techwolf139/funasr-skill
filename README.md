@@ -38,6 +38,7 @@ python /Users/mac/git/FunASR/runtime/python/websocket/funasr_wss_server.py \
 | "帮我转写这个音频 /path/to/meeting.wav" | 连接 FunASR 服务器，转写音频 |
 | "从这段录音提取文字" | 自动识别音频并转写 |
 | "处理所有 wav 文件" | 批量转写目录下所有音频 |
+| "分析这段语音的情感" | 转写并识别情感（开心/悲伤/愤怒等）|
 
 ---
 
@@ -80,7 +81,7 @@ AI 助手会自动识别以下意图并调用此 Skill：
 转写结果：
 你好，欢迎参加今天的面试。首先请介绍一下你自己...
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
+情感: 😐 中性 | 语言: 中文
 ✅ 转写完成！需要我保存到文件吗？
 ```
 
@@ -178,8 +179,34 @@ async def transcribe():
     )
     result = await client.transcribe_file("/path/to/audio.wav")
     print(result['text'])
+    print(f"情感: {result.get('emotion_text')}")
+    print(f"语言: {result.get('language_text')}")
 
 asyncio.run(transcribe())
+```
+
+### 情感识别
+
+使用 SenseVoice 模型时，返回结果会自动包含情感信息：
+
+| 情感标记 | 含义 |
+|---------|------|
+| 😐 中性 | NEUTRAL |
+| 😊 开心 | HAPPY |
+| 😢 悲伤 | SAD |
+| 😠 愤怒 | ANGRY |
+| 😨 恐惧 | FEARFUL |
+| 🤢 厌恶 | DISGUSTED |
+
+返回结果示例：
+```json
+{
+  "text": "转写文本内容",
+  "emotion": "HAPPY",
+  "emotion_text": "😊 开心",
+  "language": "zh",
+  "language_text": "中文"
+}
 ```
 
 ### 支持的音频格式

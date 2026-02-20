@@ -18,9 +18,69 @@ import re
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+SENSEVOICE_EMOTION_MAP = {
+    "NEUTRAL": "😐 中性",
+    "HAPPY": "😊 开心",
+    "SAD": "😢 悲伤",
+    "ANGRY": "😠 愤怒",
+    "FEARFUL": "😨 恐惧",
+    "DISGUSTED": "🤢 厌恶",
+}
+
+SENSEVOICE_LANGUAGE_MAP = {
+    "zh": "中文",
+    "en": "英文",
+    "yue": "粤语",
+    "ja": "日语",
+    "ko": "韩语",
+}
+
+
+def parse_sensevoice_tags(text: str) -> dict:
+    result = {
+        "language": None,
+        "language_text": None,
+        "emotion": None,
+        "emotion_text": None,
+        "emotion_scores": {},
+        "clean_text": ""
+    }
+    
+    tags = re.findall(r'<\|([^|>]+)\|>', text)
+    
+    for tag in tags:
+        tag_upper = tag.upper()
+        if tag in SENSEVOICE_LANGUAGE_MAP:
+            result["language"] = tag
+            result["language_text"] = SENSEVOICE_LANGUAGE_MAP[tag]
+        elif tag_upper in SENSEVOICE_EMOTION_MAP:
+            result["emotion"] = tag_upper
+            result["emotion_text"] = SENSEVOICE_EMOTION_MAP[tag_upper]
+    
+    emotion_scores = {}
+    for tag in tags:
+        tag_upper = tag.upper()
+        if tag_upper in SENSEVOICE_EMOTION_MAP:
+            emotion_scores[tag_upper] = emotion_scores.get(tag_upper, 0) + 1
+    if emotion_scores:
+        total = sum(emotion_scores.values())
+        result["emotion_scores"] = {k: v/total for k, v in emotion_scores.items()}
+    
+    result["clean_text"] = re.sub(r'<\|[^|]+\|>', '', text).strip()
+    
+    return result
+
 
 def clean_sensevoice_text(text: str) -> str:
     return re.sub(r'<\|[^|]+\|>', '', text).strip()
+
+
+def extract_emotion(text: str) -> str | None:
+    match = re.search(r'<\|(NEUTRAL|HAPPY|SAD|ANGRY|FEARFUL|DISGUSTED)\|>', text)
+    if match:
+        emotion = match.group(1)
+        return SENSEVOICE_EMOTION_MAP.get(emotion, emotion)
+    return None
 
 
 class FunASRClient:
@@ -29,9 +89,9 @@ class FunASRClient:
     def __init__(
         self,
         host: str = "localhost",
-        port: int = 10095,
-        ssl_enabled: bool = True,
-        mode: str = "2pass",
+        port: int = 10096,
+        ssl_enabled: bool = False,
+        mode: str = "offline",
         chunk_size: str = "5,10,5",
         chunk_interval: int = 10,
         use_itn: bool = True,
@@ -180,6 +240,15 @@ class FunASRClient:
                     "is_final": data.get("is_final", False),
                     "mode": data.get("mode", self.mode)
                 }
+                
+                parsed = parse_sensevoice_tags(result["text"])
+                result["language"] = parsed["language"]
+                result["language_text"] = parsed["language_text"]
+                result["emotion"] = parsed["emotion"]
+                result["emotion_text"] = parsed["emotion_text"]
+                result["emotion_scores"] = parsed["emotion_scores"]
+                result["clean_text"] = parsed["clean_text"]
+                
                 results.append(result)
                 
                 logger.info(f"Received: {result['text'][:100]}...")
@@ -231,12 +300,32 @@ class FunASRClient:
                     logger.warning("Timeout waiting for results")
                     results = []
                 
-                full_text = " ".join([clean_sensevoice_text(r["text"]) for r in results])
+                full_text = " ".join([r.get("clean_text", clean_sensevoice_text(r["text"])) for r in results])
+                
+                aggregated_emotion = None
+                aggregated_emotion_text = None
+                for r in results:
+                    if r.get("emotion"):
+                        aggregated_emotion = r["emotion"]
+                        aggregated_emotion_text = r["emotion_text"]
+                        break
+                
+                aggregated_language = None
+                aggregated_language_text = None
+                for r in results:
+                    if r.get("language"):
+                        aggregated_language = r["language"]
+                        aggregated_language_text = r["language_text"]
+                        break
                 
                 return {
                     "text": full_text,
                     "segments": results,
-                    "audio_file": audio_path
+                    "audio_file": audio_path,
+                    "language": aggregated_language,
+                    "language_text": aggregated_language_text,
+                    "emotion": aggregated_emotion,
+                    "emotion_text": aggregated_emotion_text,
                 }
                 
         except Exception as e:
@@ -313,7 +402,7 @@ async def main():
     parser.add_argument(
         "--port", 
         type=int, 
-        default=10095, 
+        default=10096, 
         help="FunASR server port"
     )
     parser.add_argument(
@@ -331,7 +420,7 @@ async def main():
     parser.add_argument(
         "--ssl",
         type=int,
-        default=1,
+        default=0,
         help="1 for SSL, 0 for no SSL"
     )
     parser.add_argument(
@@ -384,7 +473,11 @@ async def main():
         print(result["text"])
         print("="*50)
         
-        # Save to file if specified
+        if result.get("emotion_text"):
+            print(f"\n情感: {result['emotion_text']}")
+        if result.get("language_text"):
+            print(f"语言: {result['language_text']}")
+        
         if args.output:
             with open(args.output, "w", encoding="utf-8") as f:
                 json.dump(result, f, ensure_ascii=False, indent=2)
