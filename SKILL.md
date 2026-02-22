@@ -88,13 +88,34 @@ asyncio.run(transcribe())
 
 The skill supports the following configuration options:
 
+### Config File (config.json)
+
+Create a `config.json` in the project root:
+
+```json
+{
+  "host": "localhost",
+  "port": 10096,
+  "ssl_enabled": false,
+  "mode": "2pass",
+  "chunk_size": "5,10,5",
+  "chunk_interval": 10,
+  "use_itn": true,
+  "final_wait": 3.0
+}
+```
+
+### Command Line Arguments
+
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | host | localhost | FunASR server host |
-| port | 10095 | FunASR server port |
-| audio_file | None | Path to audio file |
+| port | 10096 | FunASR server port |
 | mode | 2pass | Processing mode: offline, online, 2pass |
-| ssl | 1 | Enable SSL (1) or disable (0) |
+| ssl_enabled | false | Enable SSL |
+| --config | config.json | Path to config file |
+
+**Priority**: command line args > config file > defaults
 
 ## Troubleshooting
 

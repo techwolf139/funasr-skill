@@ -145,21 +145,42 @@ AI 助手会自动识别以下意图并调用此 Skill：
 ### 命令行直接调用
 
 ```bash
-# 转写音频文件
+# 转写音频文件（使用配置文件）
+python scripts/funasr_ws_client.py \
+  --audio-file /path/to/audio.wav
+
+# 覆盖配置文件中的参数
 python scripts/funasr_ws_client.py \
   --host localhost \
   --port 10096 \
   --audio-file /path/to/audio.wav \
-  --ssl 0
-
-# 指定模式
-python scripts/funasr_ws_client.py \
-  --host localhost \
-  --port 10096 \
-  --audio-file /path/to/audio.mp3 \
   --mode 2pass \
   --ssl 0
+
+# 指定其他配置文件
+python scripts/funasr_ws_client.py \
+  --config /path/to/custom-config.json \
+  --audio-file /path/to/audio.wav
 ```
+
+### 配置文件
+
+默认配置文件 `config.json` 位于项目根目录：
+
+```json
+{
+  "host": "localhost",
+  "port": 10096,
+  "ssl_enabled": false,
+  "mode": "2pass",
+  "chunk_size": "5,10,5",
+  "chunk_interval": 10,
+  "use_itn": true,
+  "final_wait": 3.0
+}
+```
+
+**优先级**：命令行参数 > 配置文件 > 默认值
 
 ### Python API
 

@@ -18,9 +18,99 @@ import re
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+SENSEVOICE_EMOTION_MAP = {
+    "NEUTRAL": "😐 中性",
+    "HAPPY": "😊 开心",
+    "SAD": "😢 悲伤",
+    "ANGRY": "😠 愤怒",
+    "FEARFUL": "😨 恐惧",
+    "DISGUSTED": "🤢 厌恶",
+}
+
+SENSEVOICE_LANGUAGE_MAP = {
+    "zh": "中文",
+    "en": "英文",
+    "yue": "粤语",
+    "ja": "日语",
+    "ko": "韩语",
+}
+
+
+def parse_sensevoice_tags(text: str) -> dict:
+    result = {
+        "language": None,
+        "language_text": None,
+        "emotion": None,
+        "emotion_text": None,
+        "emotion_scores": {},
+        "clean_text": ""
+    }
+    
+    tags = re.findall(r'<\|([^|>]+)\|>', text)
+    
+    for tag in tags:
+        tag_upper = tag.upper()
+        if tag in SENSEVOICE_LANGUAGE_MAP:
+            result["language"] = tag
+            result["language_text"] = SENSEVOICE_LANGUAGE_MAP[tag]
+        elif tag_upper in SENSEVOICE_EMOTION_MAP:
+            result["emotion"] = tag_upper
+            result["emotion_text"] = SENSEVOICE_EMOTION_MAP[tag_upper]
+    
+    emotion_scores = {}
+    for tag in tags:
+        tag_upper = tag.upper()
+        if tag_upper in SENSEVOICE_EMOTION_MAP:
+            emotion_scores[tag_upper] = emotion_scores.get(tag_upper, 0) + 1
+    if emotion_scores:
+        total = sum(emotion_scores.values())
+        result["emotion_scores"] = {k: v/total for k, v in emotion_scores.items()}
+    
+    result["clean_text"] = re.sub(r'<\|[^|]+\|>', '', text).strip()
+    
+    return result
+
 
 def clean_sensevoice_text(text: str) -> str:
     return re.sub(r'<\|[^|]+\|>', '', text).strip()
+
+
+def extract_emotion(text: str) -> str | None:
+    match = re.search(r'<\|(NEUTRAL|HAPPY|SAD|ANGRY|FEARFUL|DISGUSTED)\|>', text)
+    if match:
+        emotion = match.group(1)
+        return SENSEVOICE_EMOTION_MAP.get(emotion, emotion)
+    return None
+
+
+def load_config(config_path: str = "config.json") -> dict:
+    import os
+    from pathlib import Path
+    
+    script_dir = Path(__file__).parent
+    project_root = script_dir.parent
+    config_file = project_root / config_path
+    
+    if config_file.exists():
+        with open(config_file, "r", encoding="utf-8") as f:
+            config = json.load(f)
+            logger.info(f"Loaded config from {config_file}")
+            return config
+    
+    return {}
+
+
+def merge_config_with_args(args, config: dict) -> dict:
+    result = {
+        "host": args.host if args.host != "localhost" else config.get("host", "localhost"),
+        "port": args.port if args.port != 10096 else config.get("port", 10096),
+        "ssl_enabled": (args.ssl == 1) if hasattr(args, 'ssl') else config.get("ssl_enabled", False),
+        "mode": args.mode if hasattr(args, 'mode') else config.get("mode", "2pass"),
+        "chunk_size": args.chunk_size if hasattr(args, 'chunk_size') else config.get("chunk_size", "5,10,5"),
+        "use_itn": (args.use_itn == 1) if hasattr(args, 'use_itn') else config.get("use_itn", True),
+        "final_wait": args.final_wait if hasattr(args, 'final_wait') else config.get("final_wait", 3.0),
+    }
+    return result
 
 
 class FunASRClient:
@@ -180,6 +270,20 @@ class FunASRClient:
                     "is_final": data.get("is_final", False),
                     "mode": data.get("mode", self.mode)
                 }
+                
+                parsed = parse_sensevoice_tags(result["text"])
+                result["language"] = parsed["language"]
+                result["language_text"] = parsed["language_text"]
+                result["emotion"] = parsed["emotion"]
+                result["emotion_text"] = parsed["emotion_text"]
+                result["emotion_scores"] = parsed["emotion_scores"]
+                result["clean_text"] = parsed["clean_text"]
+                
+                if parsed["emotion"]:
+                    logger.info(f"Segment emotion: {parsed['emotion_text']}")
+                if parsed["language"]:
+                    logger.info(f"Segment language: {parsed['language_text']}")
+                
                 results.append(result)
                 
                 logger.info(f"Received: {result['text'][:100]}...")
@@ -222,6 +326,7 @@ class FunASRClient:
         
         try:
             async with websockets.connect(uri, ping_interval=None, ssl=ssl_context) as websocket:
+                logger.info(f"Connected to {uri}")
                 await self._send_audio_chunks(websocket, audio_bytes, sample_rate, wav_format)
                 
                 await asyncio.sleep(0.5)
@@ -231,12 +336,39 @@ class FunASRClient:
                     logger.warning("Timeout waiting for results")
                     results = []
                 
-                full_text = " ".join([clean_sensevoice_text(r["text"]) for r in results])
+                logger.info(f"Received {len(results)} result segments")
+                
+                full_text = " ".join([r.get("clean_text", clean_sensevoice_text(r["text"])) for r in results])
+                
+                aggregated_emotion = None
+                aggregated_emotion_text = None
+                for r in results:
+                    if r.get("emotion"):
+                        aggregated_emotion = r["emotion"]
+                        aggregated_emotion_text = r["emotion_text"]
+                        logger.info(f"Emotion detected: {aggregated_emotion_text}")
+                        break
+                
+                aggregated_language = None
+                aggregated_language_text = None
+                for r in results:
+                    if r.get("language"):
+                        aggregated_language = r["language"]
+                        aggregated_language_text = r["language_text"]
+                        logger.info(f"Language detected: {aggregated_language_text}")
+                        break
+                
+                logger.info(f"Transcription complete: {len(full_text)} chars")
+                logger.info(f"Text preview: {full_text[:200]}...")
                 
                 return {
                     "text": full_text,
                     "segments": results,
-                    "audio_file": audio_path
+                    "audio_file": audio_path,
+                    "language": aggregated_language,
+                    "language_text": aggregated_language_text,
+                    "emotion": aggregated_emotion,
+                    "emotion_text": aggregated_emotion_text,
                 }
                 
         except Exception as e:
@@ -313,7 +445,7 @@ async def main():
     parser.add_argument(
         "--port", 
         type=int, 
-        default=10095, 
+        default=10096, 
         help="FunASR server port"
     )
     parser.add_argument(
@@ -324,7 +456,7 @@ async def main():
     parser.add_argument(
         "--mode",
         type=str,
-        default="offline",
+        default="2pass",
         choices=["offline", "online", "2pass"],
         help="ASR mode: offline, online, or 2pass"
     )
@@ -357,21 +489,32 @@ async def main():
         type=str,
         help="Output file for transcription results"
     )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="config.json",
+        help="Path to config file (default: config.json)"
+    )
     
     args = parser.parse_args()
+    
+    config = load_config(args.config)
+    merged = merge_config_with_args(args, config)
     
     if not args.audio_file:
         parser.error("--audio-file is required")
     
+    logger.info(f"Using config: host={merged['host']}, port={merged['port']}, mode={merged['mode']}, ssl={merged['ssl_enabled']}")
+    
     # Create client
     client = FunASRClient(
-        host=args.host,
-        port=args.port,
-        ssl_enabled=args.ssl == 1,
-        mode=args.mode,
-        chunk_size=args.chunk_size,
-        use_itn=args.use_itn == 1,
-        final_wait=args.final_wait
+        host=merged["host"],
+        port=merged["port"],
+        ssl_enabled=merged["ssl_enabled"],
+        mode=merged["mode"],
+        chunk_size=merged["chunk_size"],
+        use_itn=merged["use_itn"],
+        final_wait=merged["final_wait"]
     )
     
     # Transcribe
